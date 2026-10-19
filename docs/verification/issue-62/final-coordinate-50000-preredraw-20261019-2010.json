@@ -1,0 +1,49 @@
+{
+  "mode": "DISPLAYED_FRAME_PICK_WITH_PENDING_CAMERA",
+  "recordedAt": "2026-10-19T21:14:43.965Z",
+  "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+  "hardwareConcurrency": 10,
+  "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M1 Max, Unspecified Version)",
+  "viewport": {
+    "width": 1173.7578125,
+    "height": 688,
+    "dpr": 2
+  },
+  "nodes": 50000,
+  "edges": 150000,
+  "samples": 20,
+  "displayedFramePickP95Ms": 0.10000038146972656,
+  "displayedFramePickMaxMs": 0.9000000953674316,
+  "displayedFramePickingMs": [
+    0,
+    0.09999990463256836,
+    0.10000038146972656,
+    0.09999990463256836,
+    0.9000000953674316,
+    0,
+    0,
+    0.09999990463256836,
+    0,
+    0,
+    0.09999990463256836,
+    0.10000038146972656,
+    0,
+    0,
+    0,
+    0.09999990463256836,
+    0.09999990463256836,
+    0.09999990463256836,
+    0,
+    0
+  ],
+  "originalCamera": {
+    "yaw": 0.44999999999999996,
+    "pitch": -0.15,
+    "zoom": 1
+  },
+  "cameraStep": {
+    "yaw": 0.007,
+    "pitch": 0.003
+  },
+  "note": "One pick per animation frame, with a small camera change pending before redraw. Input queries the index of the last displayed frame; rebuilding happens only in draw and is not part of picking. No warm-up samples are discarded. These samples are separate from the steady-state benchmark; the original camera is restored afterward."
+}

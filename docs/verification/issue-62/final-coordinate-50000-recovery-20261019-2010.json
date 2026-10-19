@@ -1,0 +1,36 @@
+{
+  "lost": {
+    "canvases": [
+      {
+        "busy": "false",
+        "hidden": true,
+        "label": "3D memory graph. Drag or use arrow keys to rotate 360 degrees. Scroll, pinch, or press plus/minus to zoom. Click a node to open.",
+        "tabIndex": -1
+      },
+      {
+        "busy": "false",
+        "hidden": false,
+        "label": "3D memory graph. Drag or use arrow keys to rotate 360 degrees. Scroll or pinch to zoom. Click a node to open.",
+        "tabIndex": 0
+      }
+    ],
+    "status": [
+      "Canvas view · showing up to 2,000 nodes while WebGL2 is unavailable"
+    ]
+  },
+  "restored": {
+    "canvases": [
+      {
+        "busy": "false",
+        "edges": "150000",
+        "hidden": false,
+        "label": "3D memory graph. Drag or use arrow keys to rotate 360 degrees. Scroll, pinch, or press plus/minus to zoom. Click a node to open.",
+        "nodes": "50000",
+        "tabIndex": 0
+      }
+    ],
+    "complete": "true",
+    "status": [],
+    "step": "180"
+  }
+}

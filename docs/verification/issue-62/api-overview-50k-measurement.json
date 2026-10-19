@@ -1,0 +1,58 @@
+{
+  "measuredAt": "2026-10-19T19:16:39.639Z",
+  "command": "node --import tsx apps/api/scripts/measure-memory-graph-overview.ts",
+  "environment": {
+    "node": "v22.23.1",
+    "platform": "darwin",
+    "release": "25.5.0",
+    "cpu": "Apple M1 Max",
+    "logicalCpus": 10,
+    "loadAverageAtStart": [
+      19.56005859375,
+      40.08642578125,
+      56.12109375
+    ],
+    "loadAverageAtEnd": [
+      19.19482421875,
+      39.669921875,
+      55.8798828125
+    ]
+  },
+  "fixture": {
+    "synthetic": true,
+    "nodes": 50000,
+    "edges": 150000
+  },
+  "method": "Six sequential in-process Fastify injections of the real authenticated overview route; first cold sample plus five warm samples. Includes filtering, selection, redaction, schema validation and JSON serialization. Excludes snapshot construction, process startup and network transfer. Response bytes are uncompressed UTF-8.",
+  "samples": [
+    {
+      "milliseconds": 514.9824590000003,
+      "bytes": 23778336
+    },
+    {
+      "milliseconds": 414.066542,
+      "bytes": 23778336
+    },
+    {
+      "milliseconds": 429.17495800000006,
+      "bytes": 23778336
+    },
+    {
+      "milliseconds": 417.13570800000025,
+      "bytes": 23778336
+    },
+    {
+      "milliseconds": 433.216958,
+      "bytes": 23778336
+    },
+    {
+      "milliseconds": 408.5617920000004,
+      "bytes": 23778336
+    }
+  ],
+  "coldMilliseconds": 514.9824590000003,
+  "warmMedianMilliseconds": 417.13570800000025,
+  "warmMaxMilliseconds": 433.216958,
+  "responseBytes": 23778336,
+  "passed": true
+}

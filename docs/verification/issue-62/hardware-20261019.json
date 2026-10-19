@@ -1,0 +1,9 @@
+{
+  "machine_name": "MacBook Pro",
+  "machine_model": "MacBookPro18,2",
+  "chip_type": "Apple M1 Max",
+  "number_processors": "proc 10:8:2:0",
+  "physical_memory": "64 GB",
+  "recorded_at": "2026-10-19T19:53:27.500962+00:00",
+  "note": "Hardware fields only; serial/UUID identifiers omitted. Browser reports record actual GPU/viewport separately."
+}
