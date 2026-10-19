@@ -1,0 +1,235 @@
+# Fork-only evidence workflow. Keep this file out of the contribution branch.
+# Install on zenoutlabs/spaceapp's default branch, then dispatch the immutable
+# SHA whose 28 reviewed files have been independently verified.
+name: SpaceApp 60 Ubuntu verification
+run-name: SpaceApp 60 verification at ${{ inputs.candidate_sha }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Full immutable commit SHA of the reviewed 28-file candidate
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  focused-timing:
+    name: Real Temporal sandbox and replay under 180 seconds
+    if: github.repository == 'zenoutlabs/spaceapp'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+      PROOF_DIR: ${{ runner.temp }}/spaceapp60-focused-proof
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    steps:
+      - name: Validate immutable candidate reference
+        run: |
+          mkdir -p "$PROOF_DIR"
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'candidate_sha must be a full lowercase 40-character commit SHA'; exit 1; }
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: zenoutlabs/spaceapp
+          ref: ${{ inputs.candidate_sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Record exact source and runner
+        run: |
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          {
+            git rev-parse HEAD
+            node --version
+            npm --version
+            uname -a
+            cat /etc/os-release
+            printf 'runner=%s architecture=%s image=%s version=%s\n' "$RUNNER_OS" "$RUNNER_ARCH" "${ImageOS:-unknown}" "${ImageVersion:-unknown}"
+            printf 'run=%s/%s/actions/runs/%s attempt=%s\n' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+          } | tee "$PROOF_DIR/environment.log"
+
+      - name: Install locked candidate dependencies
+        run: npm ci 2>&1 | tee "$PROOF_DIR/install.log"
+
+      - name: Build workflow contract dependency
+        run: npm run build -w @space/contracts 2>&1 | tee "$PROOF_DIR/contracts-build.log"
+
+      - name: Measure full focused test command and enforce budget
+        run: |
+          node --input-type=module <<'NODE'
+          import { spawn } from 'node:child_process';
+          import { appendFileSync, closeSync, openSync, writeFileSync, writeSync } from 'node:fs';
+          import { join } from 'node:path';
+          const directory = process.env.PROOF_DIR;
+          const command = ['test', '-w', '@space/worker', '--', 'temporal-sandbox', 'temporal-replay'];
+          const descriptor = openSync(join(directory, 'focused-tests.log'), 'w');
+          const startedAt = new Date().toISOString();
+          const start = process.hrtime.bigint();
+          const child = spawn('npm', command, { detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+          const capture = chunk => { writeSync(descriptor, chunk); process.stdout.write(chunk); };
+          child.stdout.on('data', capture);
+          child.stderr.on('data', capture);
+          let exceeded = false;
+          let forceKill;
+          const stop = signal => { try { process.kill(-child.pid, signal); } catch (error) { if (error.code !== 'ESRCH') throw error; } };
+          const timer = setTimeout(() => {
+            exceeded = true;
+            stop('SIGTERM');
+            forceKill = setTimeout(() => stop('SIGKILL'), 5000);
+          }, 180000);
+          let spawnError;
+          child.on('error', error => { spawnError = String(error); });
+          const result = await new Promise(resolve => child.on('close', (exitCode, signal) => resolve({ exitCode, signal })));
+          clearTimeout(timer);
+          clearTimeout(forceKill);
+          closeSync(descriptor);
+          const elapsedSeconds = Number(process.hrtime.bigint() - start) / 1e9;
+          const passed = !spawnError && !exceeded && result.exitCode === 0 && result.signal === null && elapsedSeconds < 180;
+          const evidence = { candidateSha: process.env.CANDIDATE_SHA, runner: process.env.RUNNER_OS,
+            image: process.env.ImageOS, imageVersion: process.env.ImageVersion, node: process.version,
+            command: `npm ${command.join(' ')}`, startedAt, finishedAt: new Date().toISOString(),
+            elapsedSeconds, limitSeconds: 180, exceeded, ...result, spawnError, passed };
+          writeFileSync(join(directory, 'timing.json'), JSON.stringify(evidence, null, 2) + '\n');
+          const summary = `### Temporal timing: ${passed ? 'PASS' : 'FAIL'}\n\nCandidate: \`${evidence.candidateSha}\`\n\nFull focused command: **${elapsedSeconds.toFixed(3)} seconds**, required **<180 seconds**. Exit: ${result.exitCode}; signal: ${result.signal ?? 'none'}.\n\nMeasured after dependency installation and contract build; includes workflow bundling and the first Temporal test-server download.\n`;
+          writeFileSync(join(directory, 'summary.md'), summary);
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary);
+          console.log(JSON.stringify(evidence, null, 2));
+          if (!passed) process.exitCode = 1;
+          NODE
+
+      - name: Preserve focused evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: spaceapp60-focused-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/spaceapp60-focused-proof/
+          if-no-files-found: warn
+          retention-days: 30
+
+  public-quality:
+    name: Sanitized candidate public quality checks
+    if: github.repository == 'zenoutlabs/spaceapp'
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+      PROOF_DIR: ${{ runner.temp }}/spaceapp60-public-proof
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    steps:
+      - name: Validate immutable candidate reference
+        run: |
+          mkdir -p "$PROOF_DIR"
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'candidate_sha must be a full lowercase 40-character commit SHA'; exit 1; }
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: zenoutlabs/spaceapp
+          ref: ${{ inputs.candidate_sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Record exact source and runner
+        run: |
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          {
+            git rev-parse HEAD
+            node --version
+            npm --version
+            uname -a
+            cat /etc/os-release
+            printf 'runner=%s architecture=%s image=%s version=%s\n' "$RUNNER_OS" "$RUNNER_ARCH" "${ImageOS:-unknown}" "${ImageVersion:-unknown}"
+            printf 'run=%s/%s/actions/runs/%s attempt=%s\n' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+          } | tee "$PROOF_DIR/environment.log"
+
+      - name: Record only the sponsor-authorized provenance exception
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { spawnSync } from 'node:child_process';
+          import { appendFileSync, writeFileSync } from 'node:fs';
+          import { join } from 'node:path';
+          const result = spawnSync(process.execPath, ['scripts/verify-export-provenance.mjs', '.'], { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
+          writeFileSync(join(process.env.PROOF_DIR, 'provenance.log'), (result.stdout ?? '') + (result.stderr ?? ''));
+          process.stdout.write(result.stdout ?? '');
+          process.stderr.write(result.stderr ?? '');
+          if (result.error) throw result.error;
+          assert.equal(result.signal, null, 'provenance command was interrupted');
+          const report = JSON.parse(result.stdout);
+          if (result.status === 0) {
+            assert.equal(report.ok, true);
+            assert.deepEqual(report.problems, []);
+          } else {
+            assert.equal(result.status, 1);
+            assert.equal(report.ok, false);
+            assert.deepEqual([...report.problems].sort(), [
+              'differs from the manifest: CONTRIBUTING.md',
+              'differs from the manifest: apps/worker/package.json',
+              'differs from the manifest: package-lock.json',
+              'manifest records 368 transformations, found 367'
+            ].sort(), 'unexpected provenance failure outside the reviewed candidate exception');
+          }
+          writeFileSync(join(process.env.PROOF_DIR, 'provenance-exception.json'), JSON.stringify({
+            candidateSha: process.env.CANDIDATE_SHA, actualExitCode: result.status,
+            exceptionUsed: result.status === 1, problems: report.problems,
+            authority: 'https://github.com/oll4com/spaceapp/issues/60'
+          }, null, 2) + '\n');
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Public quality candidate\n\n\`${process.env.CANDIDATE_SHA}\`\n\nProvenance exit: ${result.status}. Only the sponsor-documented, exactly matched export-manifest exception is permitted. All functional checks retain their real failure status.\n`);
+          NODE
+
+      - name: Create sanitized candidate
+        run: node scripts/public-export.mjs --output "$RUNNER_TEMP/spaceapp-public-export" 2>&1 | tee "$PROOF_DIR/public-export.log"
+
+      - name: Install established public CI test prerequisites
+        id: prerequisites
+        run: |
+          sudo apt-get update -qq 2>&1 | tee "$PROOF_DIR/apt-update.log"
+          sudo apt-get install -y -qq ripgrep ffmpeg 2>&1 | tee "$PROOF_DIR/apt-install.log"
+
+      - name: Install locked sanitized candidate dependencies
+        id: install
+        working-directory: ${{ runner.temp }}/spaceapp-public-export
+        run: npm ci 2>&1 | tee "$PROOF_DIR/install.log"
+
+      - name: Public release tests
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.prerequisites.outcome == 'success' }}
+        working-directory: ${{ runner.temp }}/spaceapp-public-export
+        run: npm run test:public 2>&1 | tee "$PROOF_DIR/public-tests.log"
+
+      - name: Typecheck candidate
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.prerequisites.outcome == 'success' }}
+        working-directory: ${{ runner.temp }}/spaceapp-public-export
+        run: npm run check 2>&1 | tee "$PROOF_DIR/check.log"
+
+      - name: Build candidate
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.prerequisites.outcome == 'success' }}
+        working-directory: ${{ runner.temp }}/spaceapp-public-export
+        run: npm run build 2>&1 | tee "$PROOF_DIR/build.log"
+
+      - name: Pack launcher candidate
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.prerequisites.outcome == 'success' }}
+        working-directory: ${{ runner.temp }}/spaceapp-public-export
+        run: npm run pack:dry-run -w run-spaceapp 2>&1 | tee "$PROOF_DIR/pack.log"
+
+      - name: Preserve public quality evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: spaceapp60-public-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/spaceapp60-public-proof/
+          if-no-files-found: warn
+          retention-days: 30
