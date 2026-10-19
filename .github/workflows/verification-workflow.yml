@@ -27,11 +27,12 @@ jobs:
     timeout-minutes: 15
     env:
       CANDIDATE_SHA: ${{ inputs.candidate_sha }}
-      PROOF_DIR: ${{ runner.temp }}/spaceapp60-focused-proof
       ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
     steps:
       - name: Validate immutable candidate reference
         run: |
+          export PROOF_DIR="$RUNNER_TEMP/spaceapp60-focused-proof"
+          printf 'PROOF_DIR=%s\n' "$PROOF_DIR" >> "$GITHUB_ENV"
           mkdir -p "$PROOF_DIR"
           [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'candidate_sha must be a full lowercase 40-character commit SHA'; exit 1; }
 
@@ -124,11 +125,12 @@ jobs:
     timeout-minutes: 75
     env:
       CANDIDATE_SHA: ${{ inputs.candidate_sha }}
-      PROOF_DIR: ${{ runner.temp }}/spaceapp60-public-proof
       ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
     steps:
       - name: Validate immutable candidate reference
         run: |
+          export PROOF_DIR="$RUNNER_TEMP/spaceapp60-public-proof"
+          printf 'PROOF_DIR=%s\n' "$PROOF_DIR" >> "$GITHUB_ENV"
           mkdir -p "$PROOF_DIR"
           [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'candidate_sha must be a full lowercase 40-character commit SHA'; exit 1; }
 
