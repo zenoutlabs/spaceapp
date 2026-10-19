@@ -1,0 +1,218 @@
+# Fork-only proof. Never include this file in the #62 contribution.
+name: SpaceApp 62 Ubuntu verification
+run-name: SpaceApp 62 verification at ${{ inputs.candidate_sha }}
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Full immutable candidate commit SHA, reviewed for issue 62
+        required: true
+        type: string
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  public-quality:
+    name: Sanitized candidate public quality checks
+    if: github.repository == 'zenoutlabs/spaceapp'
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    steps:
+      - name: Validate immutable candidate reference
+        run: |
+          export PROOF_DIR="$RUNNER_TEMP/spaceapp62-public-proof"
+          printf 'PROOF_DIR=%s\n' "$PROOF_DIR" >> "$GITHUB_ENV"
+          mkdir -p "$PROOF_DIR"
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'candidate_sha must be a full lowercase 40-character commit SHA'; exit 1; }
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: zenoutlabs/spaceapp
+          ref: ${{ inputs.candidate_sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Record exact source and runner
+        run: |
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          {
+            git rev-parse HEAD
+            node --version
+            npm --version
+            uname -a
+            cat /etc/os-release
+            printf 'runner=%s architecture=%s image=%s version=%s\n' "$RUNNER_OS" "$RUNNER_ARCH" "${ImageOS:-unknown}" "${ImageVersion:-unknown}"
+            printf 'run=%s/%s/actions/runs/%s attempt=%s\n' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+          } | tee "$PROOF_DIR/environment.log"
+
+      - name: Record only the sponsor-authorized provenance exception
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { spawnSync } from 'node:child_process';
+          import { appendFileSync, writeFileSync } from 'node:fs';
+          import { join } from 'node:path';
+          const result = spawnSync(process.execPath, ['scripts/verify-export-provenance.mjs', '.'], { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
+          writeFileSync(join(process.env.PROOF_DIR, 'provenance.log'), (result.stdout ?? '') + (result.stderr ?? ''));
+          process.stdout.write(result.stdout ?? '');
+          process.stderr.write(result.stderr ?? '');
+          if (result.error) throw result.error;
+          assert.equal(result.signal, null, 'provenance command was interrupted');
+          const report = JSON.parse(result.stdout);
+          if (result.status === 0) {
+            assert.equal(report.ok, true);
+            assert.deepEqual(report.problems, []);
+          } else {
+            assert.equal(result.status, 1);
+            assert.equal(report.ok, false);
+            assert.deepEqual([...report.problems].sort(), [
+              "differs from the manifest: apps/api/src/memory-graph-routes.ts",
+              "differs from the manifest: apps/api/tests/memory-graph-api.test.ts",
+              "differs from the manifest: apps/web/src/demo/DemoStore.ts",
+              "differs from the manifest: apps/web/src/demo/demo-runtime.ts",
+              "differs from the manifest: apps/web/src/features/memory-workspace/MemoryGraph3D.tsx",
+              "differs from the manifest: apps/web/src/features/memory-workspace/MemoryWorkspace.tsx",
+              "differs from the manifest: apps/web/src/features/memory-workspace/memory-3d.ts",
+              "differs from the manifest: apps/web/src/features/memory-workspace/memory-atlas.css",
+              "differs from the manifest: apps/web/src/features/memory-workspace/memory-atlas.ts",
+              "differs from the manifest: apps/web/src/features/memory-workspace/memory-network-layout.worker.ts",
+              "differs from the manifest: apps/web/src/live-api.ts",
+              "differs from the manifest: apps/web/tests/memory-3d.test.ts",
+              "differs from the manifest: packages/contracts/src/schemas.ts",
+              "differs from the manifest: packages/contracts/tests/schemas.test.ts",
+              "manifest records 368 transformations, found 363",
+            ].sort(), 'unexpected provenance failure outside the reviewed candidate exception');
+          }
+          writeFileSync(join(process.env.PROOF_DIR, 'provenance-exception.json'), JSON.stringify({
+            candidateSha: process.env.CANDIDATE_SHA, actualExitCode: result.status,
+            exceptionUsed: result.status === 1, problems: report.problems,
+            authority: 'https://github.com/oll4com/spaceapp/issues/62'
+          }, null, 2) + '\n');
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Public quality candidate\n\n\`${process.env.CANDIDATE_SHA}\`\n\nProvenance exit: ${result.status}. Only the sponsor-documented, exactly matched export-manifest exception is permitted. All functional checks retain their real failure status.\n`);
+          NODE
+
+      - name: Create sanitized candidate
+        run: node scripts/public-export.mjs --output "$RUNNER_TEMP/spaceapp-public-export" 2>&1 | tee "$PROOF_DIR/public-export.log"
+
+      - name: Verify candidate paths survive sanitized export
+        run: |
+          node --input-type=module <<'NODE'
+          import { createHash } from 'node:crypto';
+          import { readFileSync, writeFileSync } from 'node:fs';
+          import { join } from 'node:path';
+          const manifest = [
+            {"path": "apps/api/scripts/measure-memory-graph-overview.ts", "sha256": "b86a7285f2d71833177329fc0182a8e1e241fb54c94579685d649b3cb4668f29"},
+            {"path": "apps/api/src/memory-graph-routes.ts", "sha256": "73bf8b063f90296b874a7f04873a780047b7ff83e88dec86b04290e57ce5cee2"},
+            {"path": "apps/api/tests/fixtures/large-memory-graph.ts", "sha256": "ac03a99bd0dcb31db9c0c7d4fe9cbfbacc633b3a570b684d42eb576438a72056"},
+            {"path": "apps/api/tests/memory-graph-api.test.ts", "sha256": "de56d4b017ea5cd78c87a49f369b0665b7d3e0c534bf06cc90a37faf598feb43"},
+            {"path": "apps/web/src/demo/DemoStore.ts", "sha256": "907cdb1b839eeabcdcb70d854985a1fc9a4a7a324c922a4dcf38ec6ea5b67f78"},
+            {"path": "apps/web/src/demo/demo-memory-graph.ts", "sha256": "1d0f6934ae87a6299884158332c17b3cc2591b510b95ed71bb02096feb197d4c"},
+            {"path": "apps/web/src/demo/demo-runtime.ts", "sha256": "c58bfe32695ae3900b3be8847f5933c523520d0b276be48d70ccdcf90f4e97ce"},
+            {"path": "apps/web/src/features/memory-workspace/MemoryGraph3D.tsx", "sha256": "66958a8e11d6d46a92150d4439fadefe8e73f6967bbdba34d7509e187e2ee686"},
+            {"path": "apps/web/src/features/memory-workspace/MemoryGraphCanvasFallback.tsx", "sha256": "38d1f48cb254b573f08fbc022a5819014663a47d99288145622dc89c51724099"},
+            {"path": "apps/web/src/features/memory-workspace/MemoryWorkspace.tsx", "sha256": "d499739e451be786d628987feeb776bc0ca97e77ac16d703e0b675cba4e0a718"},
+            {"path": "apps/web/src/features/memory-workspace/memory-3d-layout.ts", "sha256": "06ac2830b47fc27b3084cb04ef1395b680eae5e2b90d1db2e07fc080d042bf82"},
+            {"path": "apps/web/src/features/memory-workspace/memory-3d.ts", "sha256": "850a5cadca447c86e8554930fd162a8ad701da882b48682a71d035d1857b1399"},
+            {"path": "apps/web/src/features/memory-workspace/memory-atlas.css", "sha256": "e1d0d30ddc7bd4c145e1500abe79ed29016f04537219599d73d318d999ddc734"},
+            {"path": "apps/web/src/features/memory-workspace/memory-atlas.ts", "sha256": "6ab262762dfe88d5052740727f5c6dd52d1b40575185b4785773e6ef18cdfb7b"},
+            {"path": "apps/web/src/features/memory-workspace/memory-gpu-scene.ts", "sha256": "59d5b4d94a86e4973aab435f526c25e2b26153f52fd42c3f7d8db0bfe65c4420"},
+            {"path": "apps/web/src/features/memory-workspace/memory-layout-hydration.ts", "sha256": "e84ab7c832d02611f7df57128c8a7e7ba8494c7ef4ee4b0d8f6c5f3fede215e7"},
+            {"path": "apps/web/src/features/memory-workspace/memory-layout-protocol.ts", "sha256": "5bd232f88488cc56f908009b9a1f04073a1d89b37b1a9d45f966716da527fa27"},
+            {"path": "apps/web/src/features/memory-workspace/memory-layout-request.ts", "sha256": "901d2361c80d2d48b27c3684a5fa0cf8c3ced065d547f5fc60c649bf78040719"},
+            {"path": "apps/web/src/features/memory-workspace/memory-layout-stream.ts", "sha256": "686ea9037fb2c74ea192debde2d3479728eceee636b5084e6dfc6c2db1e45e7e"},
+            {"path": "apps/web/src/features/memory-workspace/memory-network-layout.worker.ts", "sha256": "69b2c00d63bd023401d1878f7a19aec947f4621d548b8a8cec413926bfedc6fa"},
+            {"path": "apps/web/src/features/memory-workspace/memory-pick-index.ts", "sha256": "617d561427e8130a1ff06fc801bfb5fc96ddc60e2880d5e14cc3ea59f7a532ca"},
+            {"path": "apps/web/src/features/memory-workspace/memory-webgl-renderer.ts", "sha256": "a67b9998fc49be65442c6694c54f30b81436213d5aa0fc22859055ffefb8edbd"},
+            {"path": "apps/web/src/live-api.ts", "sha256": "b86a0b2f829903df5f067777c1a90d2447065409840baca788e8a80440402a7f"},
+            {"path": "apps/web/tests/demo-memory-graph.test.ts", "sha256": "5798079d16c846a8596dc901f508eb3a13874b58370d62540a14eaa783a8a6eb"},
+            {"path": "apps/web/tests/memory-3d.test.ts", "sha256": "69befe3c73d65f5cf17786324753a19fb1bcb848a005c149521df5cac0d32f9c"},
+            {"path": "apps/web/tests/memory-gpu-scene.test.ts", "sha256": "0bb099c37a57a7b499514ab94d0383c88685436457b8f348a099ca6abe155f50"},
+            {"path": "apps/web/tests/memory-graph-limit-api.test.ts", "sha256": "a0ff8f81b4022cba82b43ccd7a02408eb1ff55947be40675e108c03a07bf078a"},
+            {"path": "apps/web/tests/memory-graph-renderer.test.tsx", "sha256": "e13facd31461868d4a65c1b36e1ff81b381890f429920767dc094ea50be1a478"},
+            {"path": "apps/web/tests/memory-layout-request.test.ts", "sha256": "750c034fdee6eab084ccd7fe3b48ae63c1a3e39713b6a318aaed314e16439d79"},
+            {"path": "apps/web/tests/memory-layout-stream.test.ts", "sha256": "9705952aecba12445b1441777d11fd99e24cb14498b26451a5b94a01ad8a8302"},
+            {"path": "apps/web/tests/memory-pick-index.test.ts", "sha256": "8360747411dc53ab0ef917854ae36d71af455bca86ff58925018386c9dde8c3c"},
+            {"path": "apps/web/tests/memory-webgl-picking.test.ts", "sha256": "eef79b3dc7eaf91f84b7aea88ff9fde0fda0b09316dcac8aabb60f0a7f0908dc"},
+            {"path": "apps/web/tests/memory-workspace-stream.test.tsx", "sha256": "67f4ae2e70d9d6fb3a1f9bee561e7dfdcdeeed85585997719f884cb551938e93"},
+            {"path": "packages/contracts/src/schemas.ts", "sha256": "61ae70ff829afbcf4e479cd34a4cc4ab460bbbe0ecd067e55c36184e96a08bab"},
+            {"path": "packages/contracts/tests/schemas.test.ts", "sha256": "126f75b92b7c6a582524c567d757dc9eecee043f5a2133270b660107f2dee2d7"},
+          ];
+          const root = process.env.RUNNER_TEMP + '/spaceapp-public-export';
+          const digest = path => {
+            try { return createHash('sha256').update(readFileSync(path)).digest('hex'); }
+            catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+          };
+          const files = manifest.map(({ path, sha256 }) => {
+            const inputSha256 = digest(path), exportSha256 = digest(join(root, path));
+            return { path, expectedInputSha256: sha256, inputSha256, exportSha256,
+              inputMatchesManifest: inputSha256 === sha256,
+              presentInExport: exportSha256 !== null,
+              exportMatchesInput: exportSha256 !== null && exportSha256 === inputSha256 };
+          });
+          const report = { candidateSha: process.env.CANDIDATE_SHA, files };
+          writeFileSync(join(process.env.PROOF_DIR, 'candidate-export-path-hashes.json'), JSON.stringify(report, null, 2) + '\n');
+          console.log(JSON.stringify(report, null, 2));
+          if (files.some(file => !file.inputMatchesManifest || !file.presentInExport)) {
+            console.error('Candidate input differs from reviewed manifest or a candidate path is absent in sanitized export.');
+            process.exitCode = 1;
+          }
+          NODE
+
+      - name: Install established public CI test prerequisites
+        id: prerequisites
+        run: |
+          sudo apt-get update -qq 2>&1 | tee "$PROOF_DIR/apt-update.log"
+          sudo apt-get install -y -qq ripgrep ffmpeg 2>&1 | tee "$PROOF_DIR/apt-install.log"
+
+      - name: Install locked sanitized candidate dependencies
+        id: install
+        working-directory: ${{ runner.temp }}/spaceapp-public-export
+        run: npm ci 2>&1 | tee "$PROOF_DIR/install.log"
+
+      - name: Public release tests
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.prerequisites.outcome == 'success' }}
+        working-directory: ${{ runner.temp }}/spaceapp-public-export
+        run: npm run test:public 2>&1 | tee "$PROOF_DIR/public-tests.log"
+
+      - name: Typecheck candidate
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.prerequisites.outcome == 'success' }}
+        working-directory: ${{ runner.temp }}/spaceapp-public-export
+        run: npm run check 2>&1 | tee "$PROOF_DIR/check.log"
+
+      - name: Build candidate
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.prerequisites.outcome == 'success' }}
+        working-directory: ${{ runner.temp }}/spaceapp-public-export
+        run: npm run build 2>&1 | tee "$PROOF_DIR/build.log"
+
+      - name: Pack launcher candidate
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.prerequisites.outcome == 'success' }}
+        working-directory: ${{ runner.temp }}/spaceapp-public-export
+        run: npm run pack:dry-run -w run-spaceapp 2>&1 | tee "$PROOF_DIR/pack.log"
+
+      - name: Focused web memory tests
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.prerequisites.outcome == 'success' }}
+        working-directory: ${{ runner.temp }}/spaceapp-public-export
+        run: npm test -w @space/web -- memory 2>&1 | tee "$PROOF_DIR/web-memory.log"
+
+      - name: Focused API memory graph tests
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.prerequisites.outcome == 'success' }}
+        working-directory: ${{ runner.temp }}/spaceapp-public-export
+        run: npm test -w @space/api -- memory-graph 2>&1 | tee "$PROOF_DIR/api-memory-graph.log"
+
+      - name: Preserve public quality evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: spaceapp62-public-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/spaceapp62-public-proof/
+          if-no-files-found: warn
+          retention-days: 30
